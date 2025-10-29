@@ -16,9 +16,6 @@ export const sendFile = (host: string, filepath: string, filename: string, files
 
         const header = `NAME:${filename}\nSIZE:${filesize}\nSALT:${salt.toString('hex')}\nIV:${iv.toString('hex')}\n\n`;
 
-        console.log(typeof iv);
-
-
         client.write(header)
 
         const fileReadStream = fs.createReadStream(filepath);

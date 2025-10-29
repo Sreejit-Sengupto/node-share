@@ -44,10 +44,6 @@ if (mode === 'send') {
     } else if (password.length < 6) {
         throw new Error("Password should be atleast 6 characters long")
     }
-
-    console.log(filePath);
-    console.log(password);
-
     const filename = path.basename(filePath);
     const filesize = statSync(filePath).size;
     sendFile(host, filePath, filename, filesize, password)

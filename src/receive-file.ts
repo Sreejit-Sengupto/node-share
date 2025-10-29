@@ -1,35 +1,27 @@
 import net from 'net'
-import fs, { write, WriteStream } from 'fs'
+import fs, { WriteStream } from 'fs'
 import { Transform } from 'stream';
 import { trackProgress } from './progress';
-import crypto, { CipherGCM, DecipherGCM } from 'crypto';
-
-let lastChunk: Buffer | null = null
-const captureLastChunk = new Transform({
-    transform(chunk, encoding, callback) {
-        lastChunk = chunk
-        callback(null, chunk)
-    }
-})
+import crypto, { DecipherGCM } from 'crypto';
 
 export const receiveFile = (password: string) => {
     const server = net.createServer((socket) => {
-        console.log("Sender connected\n");
+        console.log("Sender connected");
 
         let state: "metadata" | "data" = "metadata";
-        let header = "";
+        let headerBuffer = Buffer.alloc(0);
         let metadata: { NAME: string, SIZE: number, SALT: Buffer | null, IV: Buffer | null } = { NAME: "", SIZE: -1, SALT: null, IV: null };
         let writeStream: WriteStream | null = null
         let progress: Transform | null = null
         let decipher: DecipherGCM | null = null
 
-        socket.on('data', (chunk) => {
+        const dataHandler = (chunk: Buffer) => {
             if (state === "metadata") {
-                header += chunk.toString();
-                const headerEnd = header.indexOf("\n\n");
+                headerBuffer = Buffer.concat([headerBuffer, chunk]);
+                const headerEnd = headerBuffer.indexOf('\n\n');
+
                 if (headerEnd !== -1) {
-                    const headerData = header.slice(0, headerEnd);
-                    console.log("Header Data: ", headerData);
+                    const headerData = headerBuffer.subarray(0, headerEnd).toString();
 
                     for (const line of headerData.split("\n")) {
                         const [key, val] = line.split(":");
@@ -56,17 +48,12 @@ export const receiveFile = (password: string) => {
                     const salt = metadata.SALT;
                     const iv = metadata.IV;
 
-                    console.log(typeof iv);
                     if (!filename || isNaN(filesize) || !salt || !iv) {
-                        // console.log(metadata);
-
-
-
                         socket.end('ERROR: Invalid metadata');
                         return;
                     }
 
-                    console.log(`\nReceiving: ${filename}\n`);
+                    console.log(`Receiving: ${filename}`);
 
                     state = "data"
                     writeStream = fs.createWriteStream(filename);
@@ -75,34 +62,28 @@ export const receiveFile = (password: string) => {
                     const key = crypto.scryptSync(password, salt, 32)
                     decipher = crypto.createDecipheriv("aes-256-gcm", key, iv)
 
-                    socket.pipe(decipher).pipe(captureLastChunk).pipe(progress).pipe(writeStream)
+                    decipher.on('error', () => {
+                        console.error('\nFAILED: Wrong password or tampered data');
+                        fs.unlink(filename, () => { }); // Delete the corrupted file
+                    });
 
-                    const dataChunk = chunk.subarray(headerEnd + 2);
+                    writeStream.on("finish", () => {
+                        console.log('\nDecryption & integrity verified!');
+                        socket.end('Transfer complete');
+                    });
+
+                    socket.removeListener('data', dataHandler);
+                    socket.pipe(decipher).pipe(progress).pipe(writeStream);
+
+                    const dataChunk = headerBuffer.subarray(headerEnd + 2);
                     if (dataChunk.length > 0) {
-                        decipher.write(dataChunk)
+                        socket.unshift(dataChunk);
                     }
                 }
             }
+        }
 
-            writeStream?.on("finish", () => {
-                if (lastChunk && decipher) {
-                    if (lastChunk.length >= 16) {
-                        const tag = lastChunk.subarray(-16)
-                        const encryptedData = lastChunk.subarray(0, lastChunk.length - 16);
-
-                        try {
-                            decipher.write(encryptedData)
-                            decipher.setAuthTag(tag)
-                            decipher.final()
-                            console.log('\nDecryption & integrity verified!');
-                        } catch (error) {
-                            console.error('\nFAILED: Wrong password or tampered data');
-                        }
-                    }
-                }
-                socket.end('Transfer complete');
-            })
-        });
+        socket.on('data', dataHandler);
 
         socket.on('error', (err) => {
             console.error(err);
@@ -113,10 +94,8 @@ export const receiveFile = (password: string) => {
         });
     });
 
-
-
     server.listen(3001, () => {
-        console.log("Server up on :3001\n");
-        console.log('Waiting for the sender...\n');
+        console.log("Server up on :3001");
+        console.log('Waiting for the sender...');
     })
 }

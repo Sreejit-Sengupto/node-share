@@ -39,6 +39,7 @@ if (mode === 'recv') {
 if (mode === 'send') {
     const filePath = cmdLineArgs[4];
     const password = cmdLineArgs[5];
+    const port = cmdLineArgs[6];
     if (!password) {
         throw new Error("You need to add a password")
     } else if (password.length < 6) {
@@ -46,5 +47,5 @@ if (mode === 'send') {
     }
     const filename = path.basename(filePath);
     const filesize = statSync(filePath).size;
-    sendFile(host, filePath, filename, filesize, password)
+    sendFile(host, port, filePath, filename, filesize, password)
 }
